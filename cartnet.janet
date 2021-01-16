@@ -14,17 +14,34 @@
         (alphabet (int (* 35 (math/random)) ))
     )))
 )
+
 (defn tempdir [] 
     (or 
-        (os/getenv "TMP")
-        (os/getenv "TEMP")
         (os/getenv "USERPROFILE")
+        (os/getenv "TEMP")
+        (os/getenv "TMP")
         (error "Could not find a temp dir!")
     )
 )
 
-(defn tempfile [prefix] 
-    (path/join (tempdir) (string prefix (random-id)))
+(defn file-in-tempdir [& name] 
+    (path/join (tempdir) (string ;name))
+)
+
+(defn open-tempfile [name]
+    (def tpath (path/join (tempdir) name))
+    (def file (file/open tpath :w))
+    [tpath file]
+)
+
+(defn- finish-file [f path]
+    (file/flush f)
+    (slurp path)
+)
+
+(defn- cleanup [f path]
+    (file/close f)
+    (os/rm path)
 )
 
 (defn header-val [val] 
@@ -48,27 +65,54 @@
     )
 )
 
-# Works on linux, hangs on windows, unless I give it a timeout.
-(defn http-get [url &opt headers] 
-    (if (not= nil headers) 
-        (do 
-            (def tpath (tempfile "get-"))
-            (write-headers-file tpath headers)
-            (defer (os/rm tpath)
-                (:read (file/popen (string "curl.exe -sS -H @" tpath " " url )) :all)
-            )
-        )
-        (do 
-            (def curl-get-proc (os/spawn ["curl" "-sS" url] :p {:out :pipe :err :pipe}))
-            (pp curl-get-proc)
-            (def buf @"")
-            (try
-                (do
-                    (tracev (:read (curl-get-proc :out) :all buf 5.0))
-                )
-                ([err] nil)
-            )
-            buf
+(defn cleanup [spec] 
+    (pp "CLEAN-UP: ")
+    (each cl-spec spec 
+        (when-let [p (cl-spec :path)]
+            (pp p)
+            (os/rm p))
+        (when-let [f (cl-spec :file)] 
+            (pp f)
+            (file/flush f)
+            (file/close f)
+            (pp f)
         )
     )
+)
+
+# (defn http-get! [url &opt headers])
+
+(defn http-get [url &opt headers] 
+    (def cmd-args @["curl"])
+    (defn add-args [& args] 
+        (array/concat cmd-args args)
+    )
+    
+    (def tempfiles @[])
+    (defn cleanup-temp [& tempfile]
+        (array/concat tempfiles tempfile)
+    )
+    
+    (def req-id (random-id 36))
+    (add-args "-sS")
+    (when (not= nil headers) 
+        (def tpath (string req-id ".headers.txt"))
+        (write-headers-file tpath headers)
+        (cleanup-temp {:path tpath})
+        (add-args "-H" (string "@" tpath))
+    )
+    (add-args url)
+    
+    (def [outpath outfile] (open-tempfile (string req-id  ".out.txt")))
+    (def [errpath errfile] (open-tempfile (string req-id ".err.txt")))
+    (cleanup-temp {:path outpath :file outfile } {:path errpath :file errfile})
+    
+    (pp cmd-args)
+    (def retval (match (os/execute cmd-args :p { :out outfile :err errfile }) 
+        0 [:ok (finish-file outfile outpath)]
+        _ [:err (finish-file errfile errpath)]
+    ))
+    
+    (cleanup tempfiles)
+    retval 
 )
