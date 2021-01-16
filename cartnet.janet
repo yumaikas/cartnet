@@ -16,10 +16,12 @@
 )
 
 (defn tempdir [] 
+    (def osw (os/which))
     (or 
-        (os/getenv "USERPROFILE")
-        (os/getenv "TEMP")
-        (os/getenv "TMP")
+        (and (= osw :windows) (os/getenv "USERPROFILE"))
+        (and (= osw :windows) (os/getenv "TEMP"))
+        (and (= osw :windows) (os/getenv "TMP"))
+        (and (= osw :linux)    "/tmp")
         (error "Could not find a temp dir!")
     )
 )
