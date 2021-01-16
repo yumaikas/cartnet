@@ -48,6 +48,7 @@
     )
 )
 
+# Works on linux, hangs on windows, unless I give it a timeout.
 (defn http-get [url &opt headers] 
     (if (not= nil headers) 
         (do 
@@ -58,23 +59,16 @@
             )
         )
         (do 
-            (pp url)
-            (def curl-get-proc (os/spawn ["curl.exe" "-sS" url] :p {:out :pipe :err :pipe}))
+            (def curl-get-proc (os/spawn ["curl" "-sS" url] :p {:out :pipe :err :pipe}))
             (pp curl-get-proc)
             (def buf @"")
             (try
                 (do
-                    (pp (:read (curl-get-proc :out) :all buf 5.0))
+                    (tracev (:read (curl-get-proc :out) :all buf 5.0))
                 )
                 ([err] nil)
             )
-            (pp buf)
-            
-            (break)
-            (match (:wait curl-get-proc) 
-                0 (:read (curl-get-proc :out) :all)
-                _ (error (:read (curl-get-proc :err) :all))
-            )
+            buf
         )
     )
 )
