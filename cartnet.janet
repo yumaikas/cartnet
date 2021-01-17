@@ -1,4 +1,5 @@
 (import path)
+(import uri)
 
 (defn int [num] 
     (- num (mod num 1))
@@ -18,22 +19,22 @@
 (defn tempdir [] 
     (def osw (os/which))
     (or 
-        (and (= osw :windows) (os/getenv "USERPROFILE"))
-        (and (= osw :windows) (os/getenv "TEMP"))
         (and (= osw :windows) (os/getenv "TMP"))
+        (and (= osw :windows) (os/getenv "TEMP"))
+        (and (= osw :windows) (os/getenv "USERPROFILE"))
         (and (= osw :linux)    "/tmp")
         (error "Could not find a temp dir!")
     )
 )
 
 (defn file-in-tempdir [& name] 
-    (path/join (tempdir) (string ;name))
+    (path/join (tempdir) (string (splice name)))
 )
 
 (defn open-tempfile [name]
     (def tpath (path/join (tempdir) name))
-    (def file (file/open tpath :w))
-    [tpath file]
+    (def f (file/open tpath :w))
+    [tpath f]
 )
 
 (defn- finish-file [f path]
@@ -57,7 +58,7 @@
 
 (defn write-headers-file [path headers] 
     (def hfile (file/open path :w))
-    (defer (do (file/close hfile) (pp "EXIT"))
+    (defer (do (file/close hfile))
         (eachp (k v) headers 
             (:write hfile (header-val k))
             (:write hfile ": ")
@@ -68,53 +69,103 @@
 )
 
 (defn cleanup [spec] 
-    (pp "CLEAN-UP: ")
     (each cl-spec spec 
-        (when-let [p (cl-spec :path)]
-            (pp p)
-            (os/rm p))
         (when-let [f (cl-spec :file)] 
-            (pp f)
             (file/flush f)
             (file/close f)
-            (pp f)
+        )
+        (when-let [p (cl-spec :path)]
+            (os/rm p)
         )
     )
 )
 
-# (defn http-get! [url &opt headers])
 
-(defn http-get [url &opt headers] 
+(defn http-request [verb url &opt spec] 
+    ```
+    
+    ```
     (def cmd-args @["curl"])
-    (defn add-args [& args] 
-        (array/concat cmd-args args)
+    (defn add-arg [& args] 
+        (array/concat cmd-args args))
+        
+    # Make curl not show progress bars (-s) but still show errors in stderr (-S)
+    (add-arg "-sS")
+        
+    # Set things up for the different HTTP verbs
+    (match verb 
+        "GET" (add-arg "-G")
+        "POST" (add-arg "-X" "POST")
+        "PUT" (add-arg "-X" "PUT")
+        "PATCH" (add-arg "-X" "PATCH")
+        "DELETE" (add-arg "-X" "DELETE")
+        "OPTIONS" (add-arg "-X" "OPTIONS")
+        # Tell CURL to do a head request only
+        "HEAD" (add-arg "-I")
+        _ (error (string "Unexpected verb " verb))
     )
+    (add-arg url)
     
     (def tempfiles @[])
     (defn cleanup-temp [& tempfile]
         (array/concat tempfiles tempfile)
     )
-    
-    (def req-id (random-id 36))
-    (add-args "-sS")
-    (when (not= nil headers) 
-        (def tpath (string req-id ".headers.txt"))
-        (write-headers-file tpath headers)
-        (cleanup-temp {:path tpath})
-        (add-args "-H" (string "@" tpath))
+        
+    (def req-id (random-id 24))
+    (when-let [spec spec] 
+        (when-let [headers (spec :headers)]
+            (def tpath (string req-id ".headers.txt"))
+            (write-headers-file tpath headers)
+            (cleanup-temp {:path tpath})
+            (add-arg "-H" (string "@" tpath))
+        )
+        
+        (when-let [postdata (spec :post-body)] 
+            (def datapath (string req-id ".postdata.txt"))
+            (spit datapath postdata)
+            (cleanup-temp {:path datapath})
+            (add-arg  "-d" (string "@" datapath))
+        )
+        
+        (when-let [data-args (spec :data-args)] 
+            (def kvbuf @"")
+            (eachp (k v) data-args 
+                (buffer/push kvbuf (uri/escape (string k)) "=" (uri/escape (string v)) "&")
+            )
+            # Cut off the last "&", it should only be a single byte
+            (add-arg "-d" (string (buffer/popn kvbuf 1)))
+        )
     )
-    (add-args url)
+    
     
     (def [outpath outfile] (open-tempfile (string req-id  ".out.txt")))
     (def [errpath errfile] (open-tempfile (string req-id ".err.txt")))
-    (cleanup-temp {:path outpath :file outfile } {:path errpath :file errfile})
+    (cleanup-temp {:path outpath :file outfile} {:path errpath :file errfile})
     
-    (pp cmd-args)
     (def retval (match (os/execute cmd-args :p { :out outfile :err errfile }) 
         0 [:ok (finish-file outfile outpath)]
         _ [:err (finish-file errfile errpath)]
     ))
-    
     (cleanup tempfiles)
-    retval 
+    retval
 )
+
+(defn http-get 
+    [url &opt spec]
+    "Issues a GET request with the given request spec"
+    (http-request "GET" url spec))
+    
+(defn http-post [url &opt spec]
+    (http-request "POST" url spec))
+
+(defmacro- throwing-func [name wrapped doc] 
+    ~(defn ,name ,doc [url &opt spec]
+        (match (,wrapped url spec)
+            [:ok response] response
+            [:err err] (error err)
+        )
+    )
+)
+
+(throwing-func http-get! http-get "Like http-get, but errors on failure, instead of returning [:err err]")
+(throwing-func http-post! http-post "Like http-post, but errors on failure, instead of returning [:err err]")
