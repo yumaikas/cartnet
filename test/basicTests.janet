@@ -2,7 +2,6 @@
 (use osprey)
 
 (math/seedrandom (os/time))
-(var resp nil)
 
 (thread/new (fn [parent] 
     (GET "/test1" "This is a response!" )
