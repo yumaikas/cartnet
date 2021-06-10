@@ -4,6 +4,7 @@
     :dependencies [
         "https://github.com/janet-lang/path.git"
         "https://github.com/andrewchambers/janet-uri.git"
-        "https://github.com/swlkr/osprey.git" # Testing only
-    ]
-)
+        "https://github.com/swlkr/osprey.git" 
+         ])
+
+(declare-source :source ["cartnet.janet"])
